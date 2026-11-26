@@ -1,0 +1,8 @@
+{
+  "name": "Meridian Terminal",
+  "description": "Institutional stock charting terminal, fundamental analytics, DCF valuation suite, and Monte Carlo financial planning model. \n\n",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
