@@ -1,12 +1,22 @@
-import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { FinancialPeriod, StockProfile } from '../types/market';
-import { formatMillions } from '../utils/financeMath';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Download,
+  ExternalLink,
+  Printer,
+  X,
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { fetchTickerNews } from '../services/marketApi';
+import { FinancialPeriod, StockProfile, TickerNewsItem } from '../types/market';
+import { downloadCsv, formatMillions } from '../utils/financeMath';
 
 interface FundamentalsViewProps {
   stock: StockProfile;
   allStocks: Record<string, StockProfile>;
   onSelectSymbol: (symbol: string) => void;
+  onPrintTearSheet: () => void;
 }
 
 type StatementTab = 'income' | 'balance' | 'cashflow' | 'ratios';
@@ -140,12 +150,31 @@ export function FundamentalsView({
   stock,
   allStocks,
   onSelectSymbol,
+  onPrintTearSheet,
 }: FundamentalsViewProps) {
   const [statementTab, setStatementTab] = useState<StatementTab>('income');
   const [cadence, setCadence] = useState<Cadence>('annual');
   const [hoveredPeriodIdx, setHoveredPeriodIdx] = useState<number | null>(null);
   const [peerSortKey, setPeerSortKey] = useState<PeerSortKey>('marketCapB');
   const [peerSortAsc, setPeerSortAsc] = useState(false);
+  const [customPeersBySymbol, setCustomPeersBySymbol] = useState<Record<string, string[]>>({});
+  const [peerToAdd, setPeerToAdd] = useState<string>('');
+  const [news, setNews] = useState<TickerNewsItem[]>([]);
+  const [newsLoading, setNewsLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setNewsLoading(true);
+    fetchTickerNews(stock.symbol).then((items) => {
+      if (!cancelled) {
+        setNews(items);
+        setNewsLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stock.symbol]);
 
   const periods = cadence === 'annual' ? stock.annualFinancials : stock.quarterlyFinancials;
   const fy25 = stock.annualFinancials[stock.annualFinancials.length - 1];
@@ -158,15 +187,43 @@ export function FundamentalsView({
     return RATIO_ROWS;
   }, [statementTab]);
 
+  const activePeerSymbols = useMemo(() => {
+    const base = customPeersBySymbol[stock.symbol] ?? stock.peerSymbols;
+    return Array.from(new Set(base.filter((s) => s !== stock.symbol && Boolean(allStocks[s]))));
+  }, [customPeersBySymbol, stock.symbol, stock.peerSymbols, allStocks]);
+
+  const addablePeers = useMemo(() => {
+    const excluded = new Set([stock.symbol, ...activePeerSymbols]);
+    return Object.keys(allStocks)
+      .filter((s) => !excluded.has(s))
+      .sort();
+  }, [allStocks, stock.symbol, activePeerSymbols]);
+
+  const handleAddPeer = (sym: string) => {
+    if (!sym) return;
+    setCustomPeersBySymbol((prev) => ({
+      ...prev,
+      [stock.symbol]: [...activePeerSymbols, sym],
+    }));
+    setPeerToAdd('');
+  };
+
+  const handleRemovePeer = (sym: string) => {
+    setCustomPeersBySymbol((prev) => ({
+      ...prev,
+      [stock.symbol]: activePeerSymbols.filter((s) => s !== sym),
+    }));
+  };
+
   // Peer Comparison list including active stock
   const peerList = useMemo(() => {
-    const syms = [stock.symbol, ...stock.peerSymbols.filter((s) => s !== stock.symbol)];
+    const syms = [stock.symbol, ...activePeerSymbols];
     const items = syms.map((sym) => allStocks[sym]).filter(Boolean);
     return [...items].sort((a, b) => {
       const diff = a[peerSortKey] - b[peerSortKey];
       return peerSortAsc ? diff : -diff;
     });
-  }, [stock, allStocks, peerSortKey, peerSortAsc]);
+  }, [stock, activePeerSymbols, allStocks, peerSortKey, peerSortAsc]);
 
   const peerMedians = useMemo(() => {
     const calcMed = (vals: number[]) => {
@@ -226,14 +283,24 @@ export function FundamentalsView({
           </p>
         </div>
 
-        <div className="shrink-0 font-mono tabular-nums lg:text-right">
-          <div className="text-xs font-sans text-slate-500 dark:text-slate-400">Enterprise Value</div>
-          <div className="text-lg font-semibold text-slate-950 dark:text-white">
-            {formatMillions(stock.marketCapB * 1000 + stock.netDebtM)}
+        <div className="shrink-0 flex flex-col items-start lg:items-end gap-2">
+          <div className="font-mono tabular-nums lg:text-right">
+            <div className="text-xs font-sans text-slate-500 dark:text-slate-400">Enterprise Value</div>
+            <div className="text-lg font-semibold text-slate-950 dark:text-white">
+              {formatMillions(stock.marketCapB * 1000 + stock.netDebtM)}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              Mkt Cap ${stock.marketCapB.toFixed(1)}B · Net Debt {formatMillions(stock.netDebtM)}
+            </div>
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
-            Mkt Cap ${stock.marketCapB.toFixed(1)}B · Net Debt {formatMillions(stock.netDebtM)}
-          </div>
+          <button
+            type="button"
+            onClick={onPrintTearSheet}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border border-[#C6D6EA] dark:border-slate-700 bg-white dark:bg-[#141B29] text-[#012169] dark:text-slate-100 hover:bg-[#EAF2FD] dark:hover:bg-slate-800 whitespace-nowrap"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print / PDF Tear Sheet</span>
+          </button>
         </div>
       </div>
 
@@ -573,15 +640,73 @@ export function FundamentalsView({
       </div>
 
       {/* FactSet Peer Valuation Comps */}
-      <div className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-[#0E131D] overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+      <div className="border border-[#D6E2F0] dark:border-slate-800 rounded-lg bg-white dark:bg-[#0E131D] overflow-hidden">
+        <div className="px-4 py-3 border-b border-[#D6E2F0] dark:border-slate-800 bg-[#F8FAFD] dark:bg-[#111724] flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+            <h2 className="text-sm font-semibold text-[#012169] dark:text-white">
               Peer Valuation Comps
             </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Click any column header to sort or select a peer row to load it in the terminal.
+            <p className="text-xs text-[#5A7190] dark:text-slate-400">
+              Add or remove competitors, sort any multiple, or export the institutional comps grid.
             </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {addablePeers.length > 0 && (
+              <div className="inline-flex items-center gap-1.5">
+                <select
+                  aria-label="Add peer company"
+                  value={peerToAdd}
+                  onChange={(e) => {
+                    setPeerToAdd(e.target.value);
+                    if (e.target.value) handleAddPeer(e.target.value);
+                  }}
+                  className="px-2.5 py-1.5 text-xs rounded-md bg-white dark:bg-[#141B29] border border-[#C6D6EA] dark:border-slate-700 text-[#0A1F44] dark:text-slate-100"
+                >
+                  <option value="">+ Add Peer...</option>
+                  {addablePeers.map((sym) => (
+                    <option key={sym} value={sym}>
+                      {sym} · {allStocks[sym]?.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                downloadCsv(
+                  `${stock.symbol}_peer_comps.csv`,
+                  [
+                    'Symbol',
+                    'Company',
+                    'Market Cap ($B)',
+                    'Fwd P/E',
+                    'EV/EBITDA',
+                    'EV/Rev',
+                    'Gross Margin (%)',
+                    'Operating Margin (%)',
+                    'ROE (%)',
+                    'Rev Growth YoY (%)',
+                  ],
+                  peerList.map((p) => [
+                    p.symbol,
+                    p.name,
+                    p.marketCapB.toFixed(1),
+                    p.peForward.toFixed(1),
+                    p.evEbitda.toFixed(1),
+                    p.evRevenue.toFixed(1),
+                    p.grossMargin.toFixed(1),
+                    p.operatingMargin.toFixed(1),
+                    p.roe.toFixed(1),
+                    p.revenueGrowthYoy.toFixed(1),
+                  ])
+                );
+              }}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border border-[#C6D6EA] dark:border-slate-700 bg-white dark:bg-[#141B29] text-[#012169] dark:text-slate-200 hover:bg-[#EAF2FD] dark:hover:bg-slate-800 whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Comps</span>
+            </button>
           </div>
         </div>
 
@@ -640,10 +765,27 @@ export function FundamentalsView({
                     }`}
                   >
                     <td className="py-2.5 px-4 font-sans">
-                      <span className="font-mono font-semibold text-slate-900 dark:text-white mr-2">
-                        {peer.symbol}
-                      </span>
-                      <span className="text-slate-500 dark:text-slate-400">{peer.name}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold text-slate-900 dark:text-white">
+                          {peer.symbol}
+                        </span>
+                        <span className="text-slate-500 dark:text-slate-400 truncate max-w-[180px]">
+                          {peer.name}
+                        </span>
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemovePeer(peer.symbol);
+                            }}
+                            aria-label={`Remove ${peer.symbol} from comps`}
+                            className="ml-auto p-0.5 text-slate-400 hover:text-rose-600"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="py-2.5 px-3 text-right text-slate-900 dark:text-slate-100">
                       ${peer.marketCapB.toFixed(1)}B
@@ -697,6 +839,123 @@ export function FundamentalsView({
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* Live News, Quarterly Earnings & SEC EDGAR Filings */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Live News Wire */}
+        <div className="lg:col-span-2 border border-[#D6E2F0] dark:border-slate-800 rounded-lg bg-white dark:bg-[#0E131D] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[#D6E2F0] dark:border-slate-800 bg-[#F8FAFD] dark:bg-[#111724] flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-[#012169] dark:text-white">
+              Live Market News ({stock.symbol})
+            </h2>
+            <span className="text-[11px] text-[#5A7190] dark:text-slate-400">
+              Real-time ticker wire
+            </span>
+          </div>
+
+          <div className="divide-y divide-[#EEF3FA] dark:divide-slate-800/60">
+            {newsLoading && (
+              <div className="p-4 space-y-3">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="space-y-1.5 animate-pulse">
+                    <div className="h-3.5 w-3/4 rounded bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-2.5 w-1/3 rounded bg-slate-100 dark:bg-slate-800/60" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {!newsLoading && news.length === 0 && (
+              <div className="p-6 text-xs text-slate-500 dark:text-slate-400">
+                No recent headlines returned for {stock.symbol} right now.
+              </div>
+            )}
+            {!newsLoading &&
+              news.map((item, idx) => (
+                <a
+                  key={`${item.link}-${idx}`}
+                  href={item.link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block px-4 py-3 hover:bg-[#F5F9FF] dark:hover:bg-[#141B29] transition-colors group"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-xs font-medium text-[#0A1F44] dark:text-slate-100 group-hover:text-[#0052C2] dark:group-hover:text-blue-400 leading-snug">
+                      {item.title}
+                    </div>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                  </div>
+                  <div className="mt-1 flex items-center gap-1.5 text-[11px] text-[#5A7190] dark:text-slate-400">
+                    <span>{item.publisher}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="font-mono tabular-nums">
+                      {new Date(item.publishedAt).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                </a>
+              ))}
+          </div>
+        </div>
+
+        {/* SEC Filings & Quarterly EPS Trajectory */}
+        <div className="space-y-5">
+          <div className="border border-[#D6E2F0] dark:border-slate-800 rounded-lg bg-white dark:bg-[#0E131D] p-4 space-y-3">
+            <h2 className="text-sm font-semibold text-[#012169] dark:text-white">
+              SEC EDGAR Filings
+            </h2>
+            <p className="text-xs text-[#5A7190] dark:text-slate-400">
+              Open official regulatory filings for {stock.symbol} directly on SEC.gov.
+            </p>
+            <div className="divide-y divide-[#EEF3FA] dark:divide-slate-800/60">
+              {[
+                { form: '10-K', label: 'Annual Report (Audited Financials)' },
+                { form: '10-Q', label: 'Quarterly Report (Latest Quarter)' },
+                { form: '8-K', label: 'Current Events & Earnings Releases' },
+                { form: 'DEF 14A', label: 'Proxy Statement & Executive Comp' },
+              ].map((filing) => (
+                <a
+                  key={filing.form}
+                  href={`https://www.sec.gov/edgar/search/#/q=${encodeURIComponent(
+                    stock.symbol
+                  )}&forms=${encodeURIComponent(filing.form)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="py-2.5 flex items-center justify-between gap-2 text-xs hover:text-[#0052C2] dark:hover:text-blue-400 transition-colors"
+                >
+                  <div>
+                    <span className="font-mono font-semibold text-[#012169] dark:text-white mr-2">
+                      {filing.form}
+                    </span>
+                    <span className="text-[#334E73] dark:text-slate-300">{filing.label}</span>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <div className="border border-[#D6E2F0] dark:border-slate-800 rounded-lg bg-white dark:bg-[#0E131D] p-4 space-y-2.5">
+            <h2 className="text-sm font-semibold text-[#012169] dark:text-white">
+              Quarterly EPS &amp; Revenue Cadence
+            </h2>
+            <div className="divide-y divide-[#EEF3FA] dark:divide-slate-800/60 text-xs font-mono tabular-nums">
+              {stock.quarterlyFinancials.map((q) => (
+                <div key={q.period} className="py-2 flex items-center justify-between">
+                  <span className="font-semibold text-[#0A1F44] dark:text-slate-200">{q.period}</span>
+                  <span className="text-slate-500 dark:text-slate-400">
+                    Rev {formatMillions(q.revenue)}
+                  </span>
+                  <span className="font-semibold text-[#012169] dark:text-blue-300">
+                    EPS ${q.eps.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>

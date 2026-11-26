@@ -77,3 +77,43 @@ export async function searchLiveTickers(query: string): Promise<LiveSearchResult
     return [];
   }
 }
+
+export async function fetchTickerNews(
+  symbol: string
+): Promise<import('../types/market').TickerNewsItem[]> {
+  try {
+    const res = await fetch(`/api/market/news?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      news?: import('../types/market').TickerNewsItem[];
+    };
+    return data.news ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchEarningsCalendar(
+  symbols: string[]
+): Promise<{
+  asOf: number;
+  events: import('../types/market').EarningsEvent[];
+} | null> {
+  if (symbols.length === 0) return { asOf: Date.now(), events: [] };
+  try {
+    const res = await fetch(
+      `/api/market/earnings?symbols=${encodeURIComponent(symbols.join(','))}`
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      asOf?: number;
+      events?: import('../types/market').EarningsEvent[];
+    };
+    return {
+      asOf: data.asOf ?? Date.now(),
+      events: data.events ?? [],
+    };
+  } catch {
+    return null;
+  }
+}

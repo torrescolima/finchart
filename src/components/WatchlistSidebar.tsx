@@ -1,15 +1,22 @@
-import { Moon, Plus, RefreshCw, Search, Star, Sun, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Check, GripVertical, Moon, Plus, RefreshCw, Search, Star, Sun, Trash2, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { LiveSearchResult, searchLiveTickers } from '../services/marketApi';
-import { Sector, StockProfile } from '../types/market';
+import { CustomWatchlist, Sector, StockProfile } from '../types/market';
 
 interface WatchlistSidebarProps {
   stocks: StockProfile[];
   selectedSymbol: string;
   onSelectSymbol: (symbol: string) => void;
+  onReorderWatchlist: (fromSymbol: string, toSymbol: string) => void;
   onAddTickerFromSearch: (item: LiveSearchResult) => Promise<void>;
   favorites: string[];
   onToggleFavorite: (symbol: string) => void;
+  watchlists: CustomWatchlist[];
+  activeWatchlistId: string;
+  onSelectWatchlist: (id: string) => void;
+  onCreateWatchlist: (name: string) => void;
+  onDeleteWatchlist: (id: string) => void;
+  onToggleSymbolInWatchlist: (watchlistId: string, symbol: string) => void;
   autoRefresh: boolean;
   onToggleAutoRefresh: () => void;
   isSyncing: boolean;
@@ -64,9 +71,16 @@ export function WatchlistSidebar({
   stocks,
   selectedSymbol,
   onSelectSymbol,
+  onReorderWatchlist,
   onAddTickerFromSearch,
   favorites,
   onToggleFavorite,
+  watchlists,
+  activeWatchlistId,
+  onSelectWatchlist,
+  onCreateWatchlist,
+  onDeleteWatchlist,
+  onToggleSymbolInWatchlist,
   autoRefresh,
   onToggleAutoRefresh,
   isSyncing,
@@ -81,12 +95,29 @@ export function WatchlistSidebar({
   const [filter, setFilter] = useState<FilterKey>('ALL');
   const [remoteMatches, setRemoteMatches] = useState<LiveSearchResult[]>([]);
   const [addingSymbol, setAddingSymbol] = useState<string | null>(null);
+  const [creatingList, setCreatingList] = useState(false);
+  const [newListName, setNewListName] = useState('');
+
+  // Click-and-hold drag-to-reorder state
+  const [draggingSymbol, setDraggingSymbol] = useState<string | null>(null);
+  const draggingSymbolRef = useRef<string | null>(null);
+  const holdTimerRef = useRef<number | null>(null);
+  const pointerStartRef = useRef<{ symbol: string; y: number } | null>(null);
+  const justDraggedRef = useRef(false);
+  const rowElementsRef = useRef<Record<string, HTMLDivElement | null>>({});
 
   const existingSet = useMemo(() => new Set(stocks.map((s) => s.symbol)), [stocks]);
 
+  const activeCustomList = useMemo(
+    () => watchlists.find((w) => w.id === activeWatchlistId) ?? null,
+    [watchlists, activeWatchlistId]
+  );
+
   const filteredStocks = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const customSet = activeCustomList ? new Set(activeCustomList.symbols) : null;
     return stocks.filter((s) => {
+      if (customSet && !customSet.has(s.symbol)) return false;
       if (filter === 'STAR' && !favorites.includes(s.symbol)) return false;
       if (filter !== 'ALL' && filter !== 'STAR' && s.sector !== filter) return false;
       if (!q) return true;
@@ -96,7 +127,91 @@ export function WatchlistSidebar({
         s.sector.toLowerCase().includes(q)
       );
     });
-  }, [stocks, query, filter, favorites]);
+  }, [stocks, query, filter, favorites, activeCustomList]);
+
+  // Global pointer listeners for smooth click-and-hold drag reordering
+  useEffect(() => {
+    const clearHoldTimer = () => {
+      if (holdTimerRef.current !== null) {
+        window.clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+      }
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const start = pointerStartRef.current;
+      if (!start) return;
+
+      // Activate drag immediately once moved >= 6px vertically while holding
+      if (!draggingSymbolRef.current && Math.abs(e.clientY - start.y) >= 6) {
+        clearHoldTimer();
+        draggingSymbolRef.current = start.symbol;
+        setDraggingSymbol(start.symbol);
+        justDraggedRef.current = true;
+      }
+
+      const activeSym = draggingSymbolRef.current;
+      if (!activeSym) return;
+
+      // Find which row the pointer is currently over and live-reorder
+      for (const s of filteredStocks) {
+        if (s.symbol === activeSym) continue;
+        const el = rowElementsRef.current[s.symbol];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          onReorderWatchlist(activeSym, s.symbol);
+          break;
+        }
+      }
+    };
+
+    const handlePointerUp = () => {
+      clearHoldTimer();
+      pointerStartRef.current = null;
+      if (draggingSymbolRef.current) {
+        draggingSymbolRef.current = null;
+        setDraggingSymbol(null);
+        // Reset click guard on next tick so pointerup doesn't trigger row selection
+        window.setTimeout(() => {
+          justDraggedRef.current = false;
+        }, 0);
+      }
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    return () => {
+      clearHoldTimer();
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [filteredStocks, onReorderWatchlist]);
+
+  const startRowPointerDown = (
+    e: React.PointerEvent<HTMLElement>,
+    symbol: string,
+    immediate: boolean
+  ) => {
+    if (e.button !== 0) return;
+    pointerStartRef.current = { symbol, y: e.clientY };
+    if (immediate) {
+      draggingSymbolRef.current = symbol;
+      setDraggingSymbol(symbol);
+      justDraggedRef.current = true;
+    } else {
+      if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = window.setTimeout(() => {
+        if (pointerStartRef.current?.symbol === symbol) {
+          draggingSymbolRef.current = symbol;
+          setDraggingSymbol(symbol);
+          justDraggedRef.current = true;
+        }
+      }, 160);
+    }
+  };
 
   // Live Yahoo Finance ticker search for adding any symbol not yet in watchlist
   useEffect(() => {
@@ -155,6 +270,96 @@ export function WatchlistSidebar({
           </div>
         </div>
 
+        {/* Multi-Watchlist Switcher */}
+        <div className="flex items-center gap-1.5">
+          <select
+            aria-label="Select watchlist"
+            value={activeWatchlistId}
+            onChange={(e) => onSelectWatchlist(e.target.value)}
+            className="flex-1 min-w-0 px-2 py-1 text-xs font-medium rounded-md bg-white dark:bg-[#141B29] border border-[#C6D6EA] dark:border-slate-700 text-[#012169] dark:text-slate-100 focus:outline-none focus:border-[#0052C2]"
+          >
+            <option value="ALL">All Market ({stocks.length})</option>
+            {watchlists.map((wl) => (
+              <option key={wl.id} value={wl.id}>
+                {wl.name} ({wl.symbols.length})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setCreatingList((v) => !v)}
+            title="New custom watchlist"
+            aria-label="New custom watchlist"
+            className="p-1.5 rounded-md border border-[#C6D6EA] dark:border-slate-700 bg-white dark:bg-[#141B29] text-[#0052C2] dark:text-blue-400 hover:bg-[#EAF2FD] dark:hover:bg-slate-800 shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" />
+          </button>
+          {activeCustomList && (
+            <button
+              type="button"
+              onClick={() => onDeleteWatchlist(activeCustomList.id)}
+              title={`Delete ${activeCustomList.name}`}
+              aria-label={`Delete ${activeCustomList.name}`}
+              className="p-1.5 rounded-md border border-[#C6D6EA] dark:border-slate-700 bg-white dark:bg-[#141B29] text-slate-400 hover:text-rose-600 shrink-0"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {creatingList && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const trimmed = newListName.trim();
+              if (!trimmed) return;
+              onCreateWatchlist(trimmed);
+              setNewListName('');
+              setCreatingList(false);
+            }}
+            className="flex items-center gap-1.5"
+          >
+            <input
+              type="text"
+              value={newListName}
+              onChange={(e) => setNewListName(e.target.value)}
+              placeholder="List name (e.g. Earnings)..."
+              maxLength={32}
+              autoFocus
+              className="flex-1 px-2 py-1 text-xs rounded-md bg-white dark:bg-[#141B29] border border-[#0052C2] text-[#0A1F44] dark:text-slate-100 focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="px-2 py-1 text-xs font-semibold rounded-md bg-[#012169] text-white hover:bg-[#0052C2]"
+            >
+              Save
+            </button>
+          </form>
+        )}
+
+        {activeCustomList && (
+          <div className="flex items-center justify-between gap-2 text-[11px] text-[#334E73] dark:text-slate-300 bg-[#EAF2FD]/70 dark:bg-blue-950/30 px-2 py-1 rounded">
+            <span className="truncate">Active ticker: {selectedSymbol}</span>
+            <button
+              type="button"
+              onClick={() => onToggleSymbolInWatchlist(activeCustomList.id, selectedSymbol)}
+              className="inline-flex items-center gap-1 font-semibold text-[#0052C2] dark:text-blue-400 hover:underline shrink-0"
+            >
+              {activeCustomList.symbols.includes(selectedSymbol) ? (
+                <>
+                  <Check className="w-3 h-3" />
+                  <span>In List</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3 h-3" />
+                  <span>Add {selectedSymbol}</span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
         <div className="relative">
           <Search className="w-3.5 h-3.5 text-[#0052C2]/70 dark:text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
@@ -191,15 +396,20 @@ export function WatchlistSidebar({
 
       {/* Column Headers */}
       <div className="px-3 py-1.5 border-b border-[#E3ECF7] dark:border-slate-800/80 grid grid-cols-[1fr_auto_76px] gap-2 text-[11px] font-medium text-[#5A7190] dark:text-slate-400 bg-white dark:bg-[#0E131D]">
-        <span>Symbol</span>
+        <span>{draggingSymbol ? `Moving ${draggingSymbol}...` : 'Symbol · Hold to Reorder'}</span>
         <span className="text-center">Trend</span>
         <span className="text-right">Last / Chg</span>
       </div>
 
       {/* Stock List */}
-      <div className="flex-1 overflow-y-auto divide-y divide-[#EEF3FA] dark:divide-slate-800/60">
+      <div
+        className={`flex-1 overflow-y-auto divide-y divide-[#EEF3FA] dark:divide-slate-800/60 ${
+          draggingSymbol ? 'select-none cursor-grabbing' : ''
+        }`}
+      >
         {filteredStocks.map((stock) => {
           const isSelected = stock.symbol === selectedSymbol;
+          const isDraggingThis = stock.symbol === draggingSymbol;
           const isFav = favorites.includes(stock.symbol);
           const change = stock.price - stock.prevClose;
           const changePct = (change / Math.max(0.01, stock.prevClose)) * 100;
@@ -209,7 +419,12 @@ export function WatchlistSidebar({
           return (
             <div
               key={stock.symbol}
+              ref={(el) => {
+                rowElementsRef.current[stock.symbol] = el;
+              }}
+              onPointerDown={(e) => startRowPointerDown(e, stock.symbol, false)}
               onClick={() => {
+                if (justDraggedRef.current) return;
                 onSelectSymbol(stock.symbol);
                 onCloseMobile();
               }}
@@ -222,16 +437,33 @@ export function WatchlistSidebar({
                   onCloseMobile();
                 }
               }}
-              className={`w-full px-3 py-2.5 grid grid-cols-[1fr_auto_76px] items-center gap-2 cursor-pointer transition-colors ${
-                isSelected
-                  ? 'bg-[#EAF2FD] dark:bg-blue-950/40'
-                  : 'hover:bg-[#F5F9FF] dark:hover:bg-[#141B29]'
+              className={`group w-full pl-1.5 pr-3 py-2.5 grid grid-cols-[1fr_auto_74px] items-center gap-1.5 transition-colors select-none touch-none ${
+                isDraggingThis
+                  ? 'bg-[#DCEAFE] dark:bg-[#0052C2]/30 ring-1 ring-inset ring-[#0052C2] shadow-sm cursor-grabbing relative z-10'
+                  : isSelected
+                  ? 'bg-[#EAF2FD] dark:bg-blue-950/40 cursor-pointer'
+                  : 'hover:bg-[#F5F9FF] dark:hover:bg-[#141B29] cursor-pointer'
               }`}
             >
-              <div className="min-w-0 flex items-center gap-2">
+              <div className="min-w-0 flex items-center gap-1">
+                <span
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    startRowPointerDown(e, stock.symbol, true);
+                  }}
+                  title="Hold and drag to reorder"
+                  className={`p-0.5 rounded shrink-0 transition-colors ${
+                    isDraggingThis
+                      ? 'text-[#0052C2] dark:text-blue-300 cursor-grabbing'
+                      : 'text-slate-300 dark:text-slate-600 group-hover:text-[#0052C2]/70 cursor-grab'
+                  }`}
+                >
+                  <GripVertical className="w-3.5 h-3.5" />
+                </span>
                 <button
                   type="button"
                   aria-label={isFav ? `Remove ${stock.symbol} from starred` : `Star ${stock.symbol}`}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleFavorite(stock.symbol);
@@ -244,7 +476,7 @@ export function WatchlistSidebar({
                 >
                   <Star className="w-3.5 h-3.5" fill={isFav ? 'currentColor' : 'none'} />
                 </button>
-                <div className="min-w-0">
+                <div className="min-w-0 pl-0.5">
                   <div className="flex items-center gap-1.5">
                     <span
                       className={`text-xs font-semibold font-mono tracking-tight ${

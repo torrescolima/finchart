@@ -1,4 +1,11 @@
-export type WorkspaceTab = 'chart' | 'fundamentals' | 'dcf' | 'planner';
+export type WorkspaceTab =
+  | 'chart'
+  | 'screener'
+  | 'earnings'
+  | 'fundamentals'
+  | 'dcf'
+  | 'portfolio'
+  | 'planner';
 
 export type Sector = 'Technology' | 'Financials' | 'Healthcare' | 'Consumer' | 'Energy' | 'ETF';
 
@@ -256,3 +263,110 @@ export interface TrendLine {
   endIndex: number;
   endPrice: number;
 }
+
+export interface FibRetracement {
+  id: string;
+  startIndex: number;
+  startPrice: number;
+  endIndex: number;
+  endPrice: number;
+}
+
+export interface PriceAlert {
+  id: string;
+  symbol: string;
+  condition: 'above' | 'below';
+  targetPrice: number;
+  note: string;
+  createdAt: number;
+  triggeredAt: number | null;
+}
+
+export type SplitLayoutMode = '1' | '2' | '4';
+
+export interface SavedChartLayout {
+  id: string;
+  name: string;
+  timeframe: Timeframe;
+  chartType: ChartType;
+  subIndicator: SubIndicator;
+  showSma20: boolean;
+  showEma50: boolean;
+  showEma200: boolean;
+  showBollinger: boolean;
+  showVwap: boolean;
+  splitMode: SplitLayoutMode;
+  compareSymbol: string | null;
+}
+
+export type TradeSide = 'LONG' | 'SHORT';
+
+export interface TradeJournalEntry {
+  id: string;
+  symbol: string;
+  side: TradeSide;
+  entryDate: string; // YYYY-MM-DD
+  exitDate: string; // YYYY-MM-DD or '' if open
+  entryPrice: number;
+  exitPrice: number | null;
+  shares: number;
+  setupTag: string;
+  notes: string;
+  createdAt: number;
+}
+
+export interface CustomWatchlist {
+  id: string;
+  name: string;
+  symbols: string[];
+}
+
+export interface TickerNewsItem {
+  title: string;
+  publisher: string;
+  link: string;
+  publishedAt: number;
+  relatedTickers: string[];
+}
+
+export interface EarningsEvent {
+  symbol: string;
+  earningsDate: string; // YYYY-MM-DD
+  earningsTimestamp: number; // ms epoch
+  earningsDateEnd: string | null;
+  isEstimate: boolean;
+  epsEstimate: number | null;
+  epsLow: number | null;
+  epsHigh: number | null;
+  revenueEstimate: number | null;
+  lastQuarterEpsActual: number | null;
+  lastQuarterEpsEstimate: number | null;
+  lastQuarterSurprisePct: number | null;
+  beatCount: number;
+  historyCount: number;
+}
+
+export type PlanTier = 'free' | 'pro' | 'advisor';
+
+export type SubscriptionStatus =
+  | 'none'
+  | 'active'
+  | 'trialing'
+  | 'past_due'
+  | 'canceled';
+
+export interface AccountProfile {
+  uid: string;
+  email: string;
+  displayName: string | null;
+  planTier: PlanTier;
+  subscriptionStatus: SubscriptionStatus;
+  currentPeriodEnd: number | null;
+  termsAcceptedAt: string | null;
+  billingConfigured: boolean;
+  marketDataSource: string;
+  hasStripeCustomer: boolean;
+}
+
+
+
